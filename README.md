@@ -1,6 +1,6 @@
 # Tenant-scoped video rooms for SaaS sessions
 
-I built this over a weekend for a client project. It took about 14 hours to get a tenant onboarding, room creation, and scoped RTC token issuing without leaking the server key. Infrai keeps the integration to one API and a single `INFRAI_API_KEY`; the browser only gets the scoped token.
+Working code comes first. This service onboards a tenant, creates its room, and issues a short-lived member token without exposing the server credential. Infrai keeps the integration to one API and a single `INFRAI_API_KEY`; the browser receives only the scoped RTC token.
 
 ## Run the decision
 
@@ -12,7 +12,7 @@ export INFRAI_API_KEY='your-key'
 uvicorn tenant_video.service:app --reload
 ```
 
-To onboard the account, open a named session, then admit one member, you do this:
+Onboard the account, open a named session, then admit one member:
 
 ```bash
 curl -X POST http://127.0.0.1:8000/tenants \
@@ -28,11 +28,11 @@ curl -X POST http://127.0.0.1:8000/tenants/acme/tokens \
   -d '{"session_id":"planning","member_id":"m-7","display_name":"Ada","role":"guest"}'
 ```
 
-The response hands back the RTC token for `tenant-acme-planning`. Guests can subscribe only, no publish rights. When a member needs to push audio and video, set role `host`.
+The final response contains the RTC token returned for `tenant-acme-planning`. A guest can subscribe but cannot publish. Use role `host` when the member should publish audio and video.
 
 ## The account boundary
 
-When I shipped my first B2B toy, I learned to keep account state above session state. It cost me a late night to realize why. `active` accounts can make rooms and pull tokens. An admin flips an account to `suspended` or `closed`; then token calls die before hitting the API.
+My rule for a small B2B product is dull on purpose: account state wins over session state. `active` accounts may create rooms and receive tokens. An admin can set an account to `suspended` or `closed`; after that, token issuance stops before an API call is made.
 
 ```bash
 curl -X PATCH http://127.0.0.1:8000/tenants/acme \
@@ -40,21 +40,21 @@ curl -X PATCH http://127.0.0.1:8000/tenants/acme \
   -d '{"state":"suspended"}'
 ```
 
-The gotcha that bit me was identity scope. A bare member ID repeats across customers. So the service sends `tenant_id:member_id` as the RTC identity and stamps the tenant into each room name.
+The one real gotcha is identity scope. A member ID alone can collide across customers. The service sends `tenant_id:member_id` as the RTC identity and includes the tenant in every room name.
 
 ## Verify before shipping
 
-I wrote a test that starts with tenant `acme`, swaps to `suspended`, and requests a host token. It expects `AccountNotActive` and zero token calls logged. Another test proves a guest token stays tenant-scoped and can't publish.
+The focused test starts with input tenant `acme`, changes it to `suspended`, and asks for a host token. The expected result is `AccountNotActive`, with no token request recorded. A second boundary test confirms that a guest token is tenant-scoped and has publishing disabled.
 
 ```bash
 pytest -q
 ```
 
-The repo keeps onboarding state in memory so you can read it easily. Swap `TenantDirectory` for your DB transaction when you adapt it. Keep the active-account check next to token issuance.
+This repository owns onboarding state in memory to keep the example inspectable. Replace `TenantDirectory` with your database transaction when adapting it; keep the active-account check adjacent to token issuance.
 
 ## Wiring it up for real: Tenant Scoped Video Rooms
 
-The quick start above got me to a prototype in two days. For production you need the bits below, specific to Tenant Scoped Video Rooms.
+Quick start is above. For a real deployment you'll also need: The details below apply to Tenant Scoped Video Rooms.
 
 **Account & key**
 
